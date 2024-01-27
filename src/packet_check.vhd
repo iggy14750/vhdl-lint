@@ -2,6 +2,7 @@
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
+use ieee.math_real.all;
 
 entity packet_check is
     generic (
@@ -20,6 +21,25 @@ entity packet_check is
 end entity;
 
 architecture rtl of packet_check is
+
+    constant TOTAL_ELEMENTS    : natural := HEADER_WORDS + PACKET_WORDS;
+    constant ADDR_WIDTH        : natural := natural(ceil(log2(real(TOTAL_ELEMENTS))));
+    constant usZERO            : unsigned(WORD_SIZE-1 downto 0) := (others=>'0');
+
+    component BRAM is
+    generic (
+        DATA_WIDTH             : natural;
+        ADDR_WIDTH             : natural
+    );
+    port (
+        clk                    : in  std_logic;
+        we                     : in  std_logic;
+        write_address          : in  std_logic_vector(ADDR_WIDTH-1 downto 0);
+        write_data             : in  std_logic_vector(DATA_WIDTH-1 downto 0);
+        read_address           : in  std_logic_vector(ADDR_WIDTH-1 downto 0);
+        read_data              : out std_logic_vector(DATA_WIDTH-1 downto 0)
+    );
+    end component;
 
     function chksum(
         existing_chksum        : unsigned;
@@ -44,6 +64,7 @@ architecture rtl of packet_check is
     signal next_state          : state_t := ST_IDLE;
     signal goal_checksum       : unsigned(WORD_SIZE-1 downto 0) := (others=>'0');
     signal calc_checksum       : unsigned(WORD_SIZE-1 downto 0) := (others=>'0');
+    signal data_in_us          : unsigned(WORD_SIZE-1 downto 0) := (others=>'0');
     signal bram_we             : std_logic := '0';
     signal bram_wr_data        : std_logic_vector(WORD_SIZE-1 downto 0) := (others=>'0');
     signal bram_wr_addr        : unsigned(ADDR_WIDTH-1 downto 0) := (others=>'0');
@@ -51,6 +72,8 @@ architecture rtl of packet_check is
     signal bram_rd_addr        : unsigned(ADDR_WIDTH-1 downto 0) := (others=>'0');
 
 begin
+
+    data_in_us <= unsigned(data_in);
 
     fsm: process (data_in_valid, data_in_sop)
     is
@@ -63,14 +86,14 @@ begin
             case state is
                 when ST_IDLE =>
                     if data_in_sop = '1' then
-                        calc_checksum <= chksum(0, data_in);
+                        calc_checksum <= chksum(usZERO, data_in_us);
                         state <= ST_HEADER;
                     end if;
                 when ST_HEADER =>
                     if data_in_valid = '1' then
-                        calc_checksum <= chksum(calc_checksum, data_in);
+                        calc_checksum <= chksum(calc_checksum, data_in_us);
                         if bram_wr_addr = (PACKET_WORDS-1) then
-                            goal_checksum <= data_in; -- ???
+                            goal_checksum <= data_in_us; -- ???
                             state <= ST_CHECKSUM;
                         end if;
                     end if;
@@ -108,7 +131,7 @@ begin
             bram_wr_data <= data_in;
             bram_we <= data_in_valid;
             if data_in_sop = '1' then
-                bram_wr_addr <= 0;
+                bram_wr_addr <= usZERO;
             elsif data_in_valid = '1' then
                 bram_wr_addr <= bram_wr_addr + 1;
             end if;
@@ -132,12 +155,10 @@ begin
                 assert data_in_sop = '0' and data_in_valid='0' severity failure;
                 bram_rd_addr <= bram_rd_addr + 1;
             else
-                bram_rd_addr <= 0;
+                bram_rd_addr <= usZERO;
             end if;
         end if;
     end process;
-
-    data_out_valid <= '1' when (state = ST_OUTPUT) else '0';
 
     packet_storage: BRAM
     generic map (
@@ -147,9 +168,9 @@ begin
     port map (
         clk                    => clk,
         we                     => bram_we,
-        write_address          => bram_wr_addr,
-        write_data             => bram_wr_data,
-        read_address           => bram_rd_addr,
+        write_address          => std_logic_vector(bram_wr_addr),
+        write_data             => std_logic_vector(bram_wr_data),
+        read_address           => std_logic_vector(bram_rd_addr),
         read_data              => data_out
     );
             

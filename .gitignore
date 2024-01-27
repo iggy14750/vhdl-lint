@@ -1,0 +1,8 @@
+
+## Vim Swap Files ##
+*.swp
+
+## GHDL Generation ##
+*.o
+*.cf
+
